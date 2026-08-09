@@ -2,6 +2,7 @@
 import csv
 import io
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
@@ -9,6 +10,8 @@ import streamlit as st
 
 CSV_URL = "https://w2.dpvneuquen.gov.ar/ParteDiario.csv"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+
+TZ_ARG = ZoneInfo("America/Argentina/Salta")
 
 LINKS_INTERES = {
     "📢 Rutas neuquinas · WhatsApp": "https://whatsapp.com/channel/0029Vakr9GiIyPtaTYFeIe2J",
@@ -136,14 +139,16 @@ st.markdown("""
 <style>
 .block-container {
     max-width: 720px;
-    padding-top: 1.2rem;
+    padding-top: 2.2rem;
     padding-bottom: 2.5rem;
 }
 
 .home-title {
-    font-size: 2rem;
+    font-size: 1.8rem;
     font-weight: 800;
-    margin-bottom: .2rem;
+    line-height: 1.15;
+    margin-top: 0.2rem;
+    margin-bottom: .35rem;
 }
 
 .home-sub {
@@ -205,7 +210,7 @@ st.markdown("""
 def descargar_csv():
     r = requests.get(
         CSV_URL,
-        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.7"},
+        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.72"},
         timeout=20,
     )
     r.raise_for_status()
@@ -411,7 +416,7 @@ def consultar_clima(lat, lon):
     r = requests.get(
         WEATHER_URL,
         params=params,
-        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.7"},
+        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.72"},
         timeout=20,
     )
     r.raise_for_status()
@@ -422,7 +427,7 @@ def consultar_clima(lat, lon):
 def horas_futuras(datos, offsets=(1, 2, 3, 6)):
     hourly = datos["hourly"]
     tiempos = [datetime.fromisoformat(t) for t in hourly["time"]]
-    ahora = datetime.now()
+    ahora = datetime.now(TZ_ARG).replace(tzinfo=None)
 
     base = next(
         (i for i, t in enumerate(tiempos) if t > ahora),
@@ -684,7 +689,7 @@ for etiqueta, url in LINKS_INTERES.items():
 
 
 st.caption(
-    f"Consulta {datetime.now():%d/%m/%Y %H:%M} · "
+    f"Consulta {datetime.now(TZ_ARG):%d/%m/%Y %H:%M} · "
     "Estado oficial: Vialidad Provincial del Neuquén · "
     "Meteorología: Open-Meteo"
 )
