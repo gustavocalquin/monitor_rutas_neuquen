@@ -14,6 +14,7 @@ import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "Rutas Neuquinas - DB.xlsx"
+VIALIDAD_CACHE_PATH = BASE_DIR / "cache" / "ParteDiario.csv"
 
 CSV_URL = "https://w2.dpvneuquen.gov.ar/ParteDiario.csv"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
@@ -159,22 +160,6 @@ def cargar_base():
     return puntos
 
 
-def descargar_csv():
-    r = requests.get(
-        CSV_URL,
-        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.83"},
-        timeout=20,
-    )
-    r.raise_for_status()
-
-    for enc in ("utf-8-sig", "latin-1", "cp1252"):
-        try:
-            return r.content.decode(enc)
-        except UnicodeDecodeError:
-            pass
-
-    return r.content.decode("utf-8", errors="replace")
-
 
 def leer_csv_vialidad(texto):
     try:
@@ -204,7 +189,27 @@ def leer_csv_vialidad(texto):
 
 @st.cache_data(ttl=300)
 def cargar_vialidad():
-    return leer_csv_vialidad(descargar_csv())
+    """
+    Lee exclusivamente la copia local del último parte válido.
+    La actualización de este archivo la realiza GitHub Actions;
+    los usuarios de la app nunca consultan directamente a Vialidad.
+    """
+    if not VIALIDAD_CACHE_PATH.exists():
+        raise FileNotFoundError("No existe una copia local del parte de Vialidad.")
+
+    contenido = VIALIDAD_CACHE_PATH.read_bytes()
+
+    for enc in ("utf-8-sig", "latin-1", "cp1252"):
+        try:
+            texto = contenido.decode(enc)
+            break
+        except UnicodeDecodeError:
+            texto = None
+
+    if texto is None:
+        texto = contenido.decode("utf-8", errors="replace")
+
+    return leer_csv_vialidad(texto)
 
 
 @st.cache_data(ttl=300)
@@ -237,7 +242,7 @@ def consultar_clima(lat, lon):
     r = requests.get(
         WEATHER_URL,
         params=params,
-        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.83"},
+        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.84"},
         timeout=20,
     )
     r.raise_for_status()
@@ -635,7 +640,7 @@ except Exception as e:
         }
         for p in recorrido
     }
-    st.warning(f"No pude consultar Vialidad en este momento: {e}")
+    st.warning("No pude leer el último parte guardado de Vialidad.")
 
 
 st.markdown("### Recorrido")
@@ -808,7 +813,22 @@ st.markdown("### Links de interés")
 for etiqueta, url in LINKS_INTERES.items():
     st.link_button(etiqueta, url, use_container_width=True)
 
+# Mostramos de cuándo es realmente el parte oficial guardado.
+try:
+    _filas_parte = cargar_vialidad()
+    _fechas_horas = [
+        (str(f.get("fecha", "")).strip(), str(f.get("hora", "")).strip())
+        for f in _filas_parte
+        if str(f.get("fecha", "")).strip() or str(f.get("hora", "")).strip()
+    ]
+    _parte_txt = ""
+    if _fechas_horas:
+        _fecha, _hora = _fechas_horas[-1]
+        _parte_txt = f" · Parte Vialidad: {_fecha} {_hora}".rstrip()
+except Exception:
+    _parte_txt = ""
+
 st.caption(
-    f"Consulta {datetime.now(TZ_ARG):%d/%m/%Y %H:%M} · "
-    "Base de corredores local + Vialidad Provincial + Open-Meteo"
+    f"Consulta {datetime.now(TZ_ARG):%d/%m/%Y %H:%M}"
+    f"{_parte_txt} · Open-Meteo"
 )
