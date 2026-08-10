@@ -1,1 +1,45 @@
+name: Actualizar parte de Vialidad
 
+on:
+  workflow_dispatch:
+
+  # GitHub ejecuta cron en UTC.
+  # Argentina = UTC-3:
+  # 09:00 AR -> 12:00 UTC
+  # 15:00 AR -> 18:00 UTC
+  # 18:00 AR -> 21:00 UTC
+  # 22:00 AR -> 01:00 UTC del día siguiente
+  schedule:
+    - cron: "0 12 * * *"
+    - cron: "0 18 * * *"
+    - cron: "0 21 * * *"
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar-parte:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Descargar y validar ParteDiario.csv
+        run: python scripts/actualizar_parte.py
+
+      - name: Guardar nueva copia si cambió
+        shell: bash
+        run: |
+          if git diff --quiet -- cache/ParteDiario.csv; then
+            echo "El parte no cambió. No hay nada para guardar."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add cache/ParteDiario.csv
+          git commit -m "Actualizar parte de Vialidad"
+          git push
