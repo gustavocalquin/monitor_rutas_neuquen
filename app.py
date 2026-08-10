@@ -1,136 +1,36 @@
 
 import csv
 import io
+import re
+import unicodedata
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import openpyxl
 import requests
 import streamlit as st
 
 
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "Rutas Neuquinas - DB.xlsx"
+
 CSV_URL = "https://w2.dpvneuquen.gov.ar/ParteDiario.csv"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
-
 TZ_ARG = ZoneInfo("America/Argentina/Salta")
 
 LINKS_INTERES = {
-    "📢 Rutas neuquinas · WhatsApp": "https://whatsapp.com/channel/0029Vakr9GiIyPtaTYFeIe2J",
-    "🛣️ Vialidad Provincial del Neuquén": "https://w2.dpvneuquen.gov.ar/estadorutas.php",
-    "🌦️ Alertas del SMN": "https://www.smn.gob.ar/alertas",
-}
-
-# Localidades y puntos críticos del corredor.
-# Los puntos críticos son provisionales y están pensados para validarlos
-# posteriormente con la experiencia de los choferes.
-PUNTOS = {
-    "Las Ovejas": {"lat": -36.98898, "lon": -70.74954},
-    "Andacollo": {"lat": -37.17974, "lon": -70.66999},
-    "El Llano": {"lat": -37.223813, "lon": -70.620403},
-    "Chos Malal": {"lat": -37.37853, "lon": -70.27191},
-
-    # Punto intermedio indicado para vigilar el sector Chorriaca–Naunauco.
-    "Sector Chorriaca–Naunauco": {
-        "lat": -37.792825,
-        "lon": -70.093634,
-    },
-
-    "Las Lajas": {"lat": -38.5304, "lon": -70.3674},
-    "Zapala": {"lat": -38.8992, "lon": -70.0544},
-
-    # Punto intermedio indicado para vigilar el sector Zapala–Cutral Co.
-    "Sector Zapala–Cutral Co": {
-        "lat": -38.934102,
-        "lon": -69.671256,
-    },
-
-    "Cutral Co": {"lat": -38.9360, "lon": -69.2300},
-    "Neuquén": {"lat": -38.9516, "lon": -68.0591},
-}
-
-
-# "patrones_oficiales" son distintas formas posibles de identificar
-# registros del CSV de Vialidad. Si una forma no aparece en el parte,
-# la app prueba las siguientes.
-TRAMOS = {
-    "Las Ovejas → Andacollo": {
-        "ruta_preferida": "43",
-        "patrones_oficiales": [
-            ("Andacollo", "Cayanta", "Bella Vista", "Las Ovejas"),
-            ("Andacollo", "Las Ovejas"),
-        ],
-        "puntos_clima": ["Las Ovejas", "Andacollo"],
-        "puntos_interes": [],
-    },
-
-    "Andacollo → Chos Malal": {
-        "ruta_preferida": "43",
-        "patrones_oficiales": [
-            ("La Primavera", "El Llano", "Andacollo"),
-            ("Chos Malal", "La Primavera"),
-        ],
-        "puntos_clima": ["Andacollo", "El Llano", "Chos Malal"],
-        "puntos_interes": ["El Llano"],
-    },
-
-    "Chos Malal → Las Lajas": {
-        "ruta_preferida": "40",
-        "patrones_oficiales": [
-            ("Chos Malal", "Las Lajas"),
-            ("Chos Malal", "Naunauco"),
-            ("Naunauco", "Chorriaca"),
-            ("Chorriaca", "Las Lajas"),
-        ],
-        "puntos_clima": [
-            "Chos Malal",
-            "Sector Chorriaca–Naunauco",
-            "Las Lajas",
-        ],
-        "puntos_interes": ["Sector Chorriaca–Naunauco"],
-    },
-
-    "Las Lajas → Zapala": {
-        "ruta_preferida": "40",
-        "patrones_oficiales": [
-            ("Las Lajas", "Zapala"),
-            ("Las Lajas", "Covunco"),
-            ("Covunco", "Zapala"),
-        ],
-        "puntos_clima": ["Las Lajas", "Zapala"],
-        "puntos_interes": [],
-    },
-
-    "Zapala → Cutral Co": {
-        "ruta_preferida": "22",
-        "patrones_oficiales": [
-            ("Zapala", "Cutral Co"),
-            ("Zapala", "Cutral-Có"),
-            ("Zapala", "Cutral"),
-        ],
-        "puntos_clima": [
-            "Zapala",
-            "Sector Zapala–Cutral Co",
-            "Cutral Co",
-        ],
-        "puntos_interes": ["Sector Zapala–Cutral Co"],
-    },
-
-    "Cutral Co → Neuquén": {
-        "ruta_preferida": "22",
-        "patrones_oficiales": [
-            ("Cutral Co", "Neuquén"),
-            ("Cutral-Có", "Neuquén"),
-            ("Cutral", "Neuquén"),
-            ("Cutral Co", "Senillosa"),
-            ("Senillosa", "Neuquén"),
-        ],
-        "puntos_clima": ["Cutral Co", "Neuquén"],
-        "puntos_interes": [],
-    },
+    "📢 Rutas neuquinas · WhatsApp":
+        "https://whatsapp.com/channel/0029Vakr9GiIyPtaTYFeIe2J",
+    "🛣️ Vialidad Provincial del Neuquén":
+        "https://w2.dpvneuquen.gov.ar/estadorutas.php",
+    "🌦️ Alertas del SMN":
+        "https://www.smn.gob.ar/alertas",
 }
 
 
 st.set_page_config(
-    page_title="Estado de Ruta",
+    page_title="Rutas Neuquinas - Estado del tránsito y del tiempo",
     page_icon="🚌",
     layout="centered",
 )
@@ -138,66 +38,52 @@ st.set_page_config(
 st.markdown("""
 <style>
 .block-container {
-    max-width: 720px;
+    max-width: 760px;
     padding-top: 2.2rem;
     padding-bottom: 2.5rem;
 }
-
-.home-title {
+.app-title {
     font-size: 1.8rem;
     font-weight: 800;
     line-height: 1.15;
-    margin-top: 0.2rem;
-    margin-bottom: .35rem;
+    margin: .2rem 0 .35rem 0;
 }
-
-.home-sub {
+.app-sub {
     opacity: .72;
-    margin-bottom: 1.3rem;
+    margin-bottom: 1.1rem;
 }
-
 .route-card {
     border: 1px solid rgba(128,128,128,.22);
-    border-radius: 24px;
-    padding: 18px;
+    border-radius: 22px;
+    padding: 17px;
     background: rgba(128,128,128,.04);
     margin: 12px 0;
 }
-
 .route-name {
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     font-weight: 750;
-    margin-bottom: 6px;
 }
-
 .route-temp {
-    font-size: 2.8rem;
+    font-size: 2.7rem;
     font-weight: 800;
     line-height: 1;
     margin: 7px 0 5px 0;
 }
-
 .route-sub {
     opacity: .72;
-    font-size: .95rem;
+    font-size: .93rem;
 }
-
 .poi-box {
     border-left: 4px solid #f0a000;
     padding: 11px 13px;
-    margin: 12px 0;
+    margin: 10px 0;
     border-radius: 10px;
     background: rgba(240,160,0,.08);
 }
-
-.links-box {
-    border: 1px solid rgba(128,128,128,.18);
-    border-radius: 18px;
-    padding: 12px 14px;
-    margin-top: 18px;
-    background: rgba(128,128,128,.025);
+.point-line {
+    font-size: .92rem;
+    opacity: .8;
 }
-
 .stButton > button,
 .stLinkButton > a {
     border-radius: 16px;
@@ -207,185 +93,121 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+def normalizar(texto):
+    texto = str(texto or "").upper().strip()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    texto = re.sub(r"\s+", " ", texto)
+    return texto
+
+
+def parse_latlong(valor):
+    partes = [p.strip() for p in str(valor).split(",")]
+    if len(partes) != 2:
+        raise ValueError(f"Coordenadas inválidas: {valor}")
+    return float(partes[0]), float(partes[1])
+
+
+@st.cache_data
+def cargar_base():
+    libro = openpyxl.load_workbook(DB_PATH, data_only=True)
+    puntos = []
+
+    for hoja in libro.worksheets:
+        encabezados = [
+            normalizar(c.value) if c.value is not None else ""
+            for c in hoja[1]
+        ]
+        idx = {nombre: i for i, nombre in enumerate(encabezados)}
+
+        requeridos = [
+            "ID", "CODIGO", "CORREDOR", "ORDEN", "NOMBRE",
+            "LATITUD - LONGITUD", "TIPO", "RUTA", "PRIORIDAD", "NOTA"
+        ]
+
+        if not all(c in idx for c in requeridos):
+            continue
+
+        for fila in hoja.iter_rows(min_row=2, values_only=True):
+            if not fila[idx["NOMBRE"]]:
+                continue
+
+            lat, lon = parse_latlong(fila[idx["LATITUD - LONGITUD"]])
+
+            orden_raw = fila[idx["ORDEN"]]
+            try:
+                orden = int(str(orden_raw))
+            except Exception:
+                continue
+
+            puntos.append({
+                "id": str(fila[idx["ID"]] or "").strip(),
+                "codigo": normalizar(fila[idx["CODIGO"]]),
+                "corredor": str(fila[idx["CORREDOR"]] or "").strip(),
+                "orden": orden,
+                "nombre": normalizar(fila[idx["NOMBRE"]]),
+                "lat": lat,
+                "lon": lon,
+                "tipo": normalizar(fila[idx["TIPO"]]),
+                "ruta": normalizar(fila[idx["RUTA"]]),
+                "prioridad": normalizar(fila[idx["PRIORIDAD"]]),
+                "nota": str(fila[idx["NOTA"]] or "").strip(),
+                "hoja": hoja.title,
+            })
+
+    puntos.sort(key=lambda p: (p["corredor"], p["orden"]))
+    return puntos
+
+
 def descargar_csv():
     r = requests.get(
         CSV_URL,
-        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.72"},
+        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.83"},
         timeout=20,
     )
     r.raise_for_status()
 
-    for encoding in ("utf-8-sig", "latin-1", "cp1252"):
+    for enc in ("utf-8-sig", "latin-1", "cp1252"):
         try:
-            return r.content.decode(encoding)
+            return r.content.decode(enc)
         except UnicodeDecodeError:
             pass
 
     return r.content.decode("utf-8", errors="replace")
 
 
-def leer_filas(texto):
+def leer_csv_vialidad(texto):
     try:
         dialecto = csv.Sniffer().sniff(texto[:5000], delimiters=",;\t|")
         delimitador = dialecto.delimiter
     except csv.Error:
         delimitador = ";"
 
-    return [
-        fila
-        for fila in csv.reader(io.StringIO(texto), delimiter=delimitador)
-        if any(celda.strip() for celda in fila)
-    ]
+    filas = []
+    for f in csv.reader(io.StringIO(texto), delimiter=delimitador):
+        if not any(str(x).strip() for x in f):
+            continue
+        campos = f + [""] * max(0, 11 - len(f))
+        filas.append({
+            "ruta": str(campos[1]).strip(),
+            "tramo": str(campos[3]).strip(),
+            "superficie": str(campos[4]).strip(),
+            "longitud": str(campos[5]).strip(),
+            "estado_codigo": str(campos[6]).strip(),
+            "restriccion": str(campos[7]).strip(),
+            "observaciones": str(campos[8]).strip(),
+            "fecha": str(campos[9]).strip(),
+            "hora": str(campos[10]).strip(),
+        })
+    return filas
 
 
-def limpiar(valor):
-    return valor.strip() if valor else ""
+@st.cache_data(ttl=300)
+def cargar_vialidad():
+    return leer_csv_vialidad(descargar_csv())
 
 
-def parsear_fila(fila):
-    campos = fila + [""] * max(0, 11 - len(fila))
-    return {
-        "ruta": limpiar(campos[1]),
-        "tramo": limpiar(campos[3]),
-        "superficie": limpiar(campos[4]),
-        "longitud": limpiar(campos[5]),
-        "estado_codigo": limpiar(campos[6]),
-        "restriccion": limpiar(campos[7]),
-        "observaciones": limpiar(campos[8]),
-        "fecha": limpiar(campos[9]),
-        "hora": limpiar(campos[10]),
-    }
-
-
-def fila_contiene(fila, palabras):
-    texto = " | ".join(fila).casefold()
-    return all(p.casefold() in texto for p in palabras)
-
-
-def ruta_coincide(fila, ruta_preferida):
-    if not ruta_preferida or len(fila) < 2:
-        return True
-    return ruta_preferida.casefold() in limpiar(fila[1]).casefold()
-
-
-def buscar_segmentos(filas, cfg):
-    """
-    Busca todas las coincidencias útiles del tramo y evita duplicados.
-
-    Primero prioriza la ruta indicada (43, 40, 22). Si una fila puede
-    identificarse con más de un patrón, se muestra una sola vez.
-    """
-    resultados = []
-    vistos = set()
-
-    for palabras in cfg["patrones_oficiales"]:
-        candidatos = [
-            fila for fila in filas
-            if fila_contiene(fila, palabras)
-            and ruta_coincide(fila, cfg.get("ruta_preferida"))
-        ]
-
-        # Fallback: si Vialidad cambia la forma de escribir la ruta,
-        # al menos intentamos localizar el tramo por nombre.
-        if not candidatos:
-            candidatos = [
-                fila for fila in filas
-                if fila_contiene(fila, palabras)
-            ]
-
-        for fila in candidatos:
-            clave = tuple(fila)
-            if clave not in vistos:
-                vistos.add(clave)
-                resultados.append(parsear_fila(fila))
-
-    return resultados
-
-
-def estado_info(codigo):
-    codigo = (codigo or "").upper()
-
-    if codigo in ("I", "INT"):
-        return 3, "🔴", "INTRANSITABLE"
-
-    if codigo == "TCP":
-        return 2, "🟡", "TRANSITABLE CON PRECAUCIÓN"
-
-    if codigo == "T":
-        return 1, "🟢", "TRANSITABLE"
-
-    return 0, "⚪", codigo or "SIN DATO"
-
-
-def peor_estado(segmentos):
-    if not segmentos:
-        return "⚪", "SIN DATO OFICIAL"
-
-    peor = max(
-        segmentos,
-        key=lambda s: estado_info(s["estado_codigo"])[0]
-    )
-
-    _, icono, texto = estado_info(peor["estado_codigo"])
-    return icono, texto
-
-
-def descripcion_tiempo(codigo):
-    codigos = {
-        0: "Despejado",
-        1: "Mayormente despejado",
-        2: "Parcialmente nublado",
-        3: "Cubierto",
-        45: "Niebla",
-        48: "Niebla con escarcha",
-        51: "Llovizna leve",
-        53: "Llovizna moderada",
-        55: "Llovizna intensa",
-        56: "Llovizna helada leve",
-        57: "Llovizna helada intensa",
-        61: "Lluvia leve",
-        63: "Lluvia moderada",
-        65: "Lluvia intensa",
-        66: "Lluvia helada leve",
-        67: "Lluvia helada intensa",
-        71: "Nevada leve",
-        73: "Nevada moderada",
-        75: "Nevada intensa",
-        77: "Granos de nieve",
-        80: "Chaparrones leves",
-        81: "Chaparrones moderados",
-        82: "Chaparrones intensos",
-        85: "Chaparrones de nieve leves",
-        86: "Chaparrones de nieve intensos",
-        95: "Tormenta",
-        96: "Tormenta con granizo leve",
-        99: "Tormenta con granizo intenso",
-    }
-
-    return codigos.get(codigo, f"Código {codigo}")
-
-
-def icono_tiempo(codigo):
-    if codigo == 0:
-        return "☀️"
-    if codigo in (1, 2):
-        return "🌤️"
-    if codigo == 3:
-        return "☁️"
-    if codigo in (45, 48):
-        return "🌫️"
-    if codigo in (51, 53, 55, 61, 63, 65, 80, 81, 82):
-        return "🌧️"
-    if codigo in (56, 57, 66, 67):
-        return "🧊"
-    if codigo in (71, 73, 75, 77, 85, 86):
-        return "🌨️"
-    if codigo in (95, 96, 99):
-        return "⛈️"
-
-    return "🌡️"
-
-
+@st.cache_data(ttl=300)
 def consultar_clima(lat, lon):
     params = {
         "latitude": lat,
@@ -412,16 +234,55 @@ def consultar_clima(lat, lon):
             "visibility",
         ]),
     }
-
     r = requests.get(
         WEATHER_URL,
         params=params,
-        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.72"},
+        headers={"User-Agent": "Monitor-Rutas-Neuquen/0.83"},
         timeout=20,
     )
     r.raise_for_status()
-
     return r.json()
+
+
+def estado_info(codigo):
+    c = normalizar(codigo)
+    if c in ("I", "INT"):
+        return 3, "🔴", "INTRANSITABLE"
+    if c == "TCP":
+        return 2, "🟡", "TRANSITABLE CON PRECAUCION"
+    if c == "T":
+        return 1, "🟢", "TRANSITABLE"
+    return 0, "⚪", c or "SIN DATO"
+
+
+def descripcion_tiempo(codigo):
+    mapa = {
+        0: "Despejado", 1: "Mayormente despejado", 2: "Parcialmente nublado",
+        3: "Cubierto", 45: "Niebla", 48: "Niebla con escarcha",
+        51: "Llovizna leve", 53: "Llovizna moderada", 55: "Llovizna intensa",
+        56: "Llovizna helada leve", 57: "Llovizna helada intensa",
+        61: "Lluvia leve", 63: "Lluvia moderada", 65: "Lluvia intensa",
+        66: "Lluvia helada leve", 67: "Lluvia helada intensa",
+        71: "Nevada leve", 73: "Nevada moderada", 75: "Nevada intensa",
+        77: "Granos de nieve", 80: "Chaparrones leves",
+        81: "Chaparrones moderados", 82: "Chaparrones intensos",
+        85: "Chaparrones de nieve leves", 86: "Chaparrones de nieve intensos",
+        95: "Tormenta", 96: "Tormenta con granizo leve",
+        99: "Tormenta con granizo intenso",
+    }
+    return mapa.get(codigo, f"Código {codigo}")
+
+
+def icono_tiempo(codigo):
+    if codigo == 0: return "☀️"
+    if codigo in (1, 2): return "🌤️"
+    if codigo == 3: return "☁️"
+    if codigo in (45, 48): return "🌫️"
+    if codigo in (51, 53, 55, 61, 63, 65, 80, 81, 82): return "🌧️"
+    if codigo in (56, 57, 66, 67): return "🧊"
+    if codigo in (71, 73, 75, 77, 85, 86): return "🌨️"
+    if codigo in (95, 96, 99): return "⛈️"
+    return "🌡️"
 
 
 def horas_futuras(datos, offsets=(1, 2, 3, 6)):
@@ -429,22 +290,15 @@ def horas_futuras(datos, offsets=(1, 2, 3, 6)):
     tiempos = [datetime.fromisoformat(t) for t in hourly["time"]]
     ahora = datetime.now(TZ_ARG).replace(tzinfo=None)
 
-    base = next(
-        (i for i, t in enumerate(tiempos) if t > ahora),
-        None,
-    )
-
+    base = next((i for i, t in enumerate(tiempos) if t > ahora), None)
     if base is None:
         return []
 
     resultado = []
-
     for offset in offsets:
         i = base + offset - 1
-
         if i >= len(tiempos):
             continue
-
         resultado.append({
             "offset": offset,
             "hora": tiempos[i],
@@ -452,222 +306,494 @@ def horas_futuras(datos, offsets=(1, 2, 3, 6)):
             "precipitacion": hourly["precipitation"][i],
             "nieve": hourly["snowfall"][i],
             "codigo": hourly["weather_code"][i],
-            "viento": hourly["wind_speed_10m"][i],
             "rafagas": hourly["wind_gusts_10m"][i],
             "visibilidad": hourly["visibility"][i],
         })
+    return resultado
+
+
+def seleccionar_recorrido(puntos, origen, destino):
+    po = next(p for p in puntos if p["nombre"] == origen)
+    pd = next(p for p in puntos if p["nombre"] == destino)
+
+    if po["corredor"] != pd["corredor"]:
+        return []
+
+    minimo = min(po["orden"], pd["orden"])
+    maximo = max(po["orden"], pd["orden"])
+
+    seleccion = [
+        p for p in puntos
+        if p["corredor"] == po["corredor"]
+        and minimo <= p["orden"] <= maximo
+    ]
+    seleccion.sort(key=lambda p: p["orden"])
+
+    if po["orden"] > pd["orden"]:
+        seleccion.reverse()
+
+    return seleccion
+
+
+
+def ruta_equivalente(ruta_punto, ruta_vialidad):
+    """
+    Compara RN22/RP43/RN40 con la forma en que Vialidad escribe la ruta.
+    Se prioriza el número, porque el CSV puede variar en prefijos/formato.
+    """
+    rp = normalizar(ruta_punto)
+    rv = normalizar(ruta_vialidad)
+
+    numero_p = "".join(c for c in rp if c.isdigit())
+    numero_v = "".join(c for c in rv if c.isdigit())
+
+    return bool(numero_p and numero_v and numero_p == numero_v)
+
+
+def nivel_visual_fila(fila):
+    """
+    Traduce exclusivamente información OFICIAL de Vialidad a color.
+
+    ROJO   = intransitable.
+    NARANJA= transitable con precaución + condición/restricción importante
+             mencionada en el parte (hielo, nieve, cadenas, horario, etc.).
+    AMARILLO = transitable con precaución.
+    VERDE  = transitable.
+    """
+    severidad, _, estado = estado_info(fila["estado_codigo"])
+
+    if severidad >= 3:
+        return 4, "🔴", "INTRANSITABLE"
+
+    texto = normalizar(
+        f'{fila.get("restriccion", "")} {fila.get("observaciones", "")}'
+    )
+
+    claves_naranja = (
+        "CADENA",
+        "HIELO",
+        "NIEVE",
+        "HORARIO",
+        "NOCTURNO",
+        "RESTRICCION",
+        "PORTACION",
+        "OBLIGATORIO",
+        "OBLIGATORIA",
+        "CALZADA RESBALADIZA",
+    )
+
+    if severidad == 2 and any(clave in texto for clave in claves_naranja):
+        return 3, "🟠", "PRECAUCION / RESTRICCION IMPORTANTE"
+
+    if severidad == 2:
+        return 2, "🟡", "TRANSITABLE CON PRECAUCION"
+
+    if severidad == 1:
+        return 1, "🟢", "TRANSITABLE"
+
+    return 0, "⚪", "SIN DATO"
+
+
+def estados_oficiales_por_punto(filas, recorrido):
+    """
+    Asocia filas de Vialidad a los puntos del recorrido sin inventar estados.
+
+    Regla principal:
+    - Si un parte menciona dos o más puntos conocidos de la misma ruta,
+      se considera que cubre el intervalo comprendido entre ellos.
+    - Si menciona un solo punto conocido, se asocia únicamente a ese punto.
+    - Si no menciona ningún punto de nuestra base, no se fuerza una asociación.
+
+    Si varias filas afectan el mismo punto, se conserva la condición más severa.
+    """
+    resultado = {
+        p["codigo"]: {
+            "nivel": 0,
+            "icono": "⚪",
+            "texto": "SIN ASOCIACION SEGURA AL PARTE",
+            "filas": [],
+        }
+        for p in recorrido
+    }
+
+    for fila in filas:
+        puntos_misma_ruta = [
+            p for p in recorrido
+            if ruta_equivalente(p["ruta"], fila["ruta"])
+        ]
+
+        if not puntos_misma_ruta:
+            continue
+
+        texto_tramo = normalizar(fila.get("tramo", ""))
+
+        mencionados = [
+            p for p in puntos_misma_ruta
+            if p["nombre"] and p["nombre"] in texto_tramo
+        ]
+
+        afectados = []
+
+        if len(mencionados) >= 2:
+            minimo = min(p["orden"] for p in mencionados)
+            maximo = max(p["orden"] for p in mencionados)
+
+            afectados = [
+                p for p in puntos_misma_ruta
+                if minimo <= p["orden"] <= maximo
+            ]
+
+        elif len(mencionados) == 1:
+            afectados = mencionados
+
+        else:
+            continue
+
+        nivel, icono, texto = nivel_visual_fila(fila)
+
+        for punto in afectados:
+            actual = resultado[punto["codigo"]]
+            actual["filas"].append(fila)
+
+            if nivel > actual["nivel"]:
+                actual["nivel"] = nivel
+                actual["icono"] = icono
+                actual["texto"] = texto
 
     return resultado
 
 
-def resumen_clima(nombres, clima):
-    registros = []
+def completar_estados_conservadores(recorrido, estados):
+    """
+    Completa puntos sin asociación directa usando una regla conservadora.
 
-    for nombre in nombres:
-        actual = clima[nombre]["current"]
+    Para cada punto sin estado:
+    - busca la referencia conocida más cercana hacia atrás y hacia adelante
+      dentro de la misma ruta;
+    - si existen ambas, usa la condición más restrictiva;
+    - si sólo existe una, hereda esa condición;
+    - si no hay ninguna referencia conocida para esa ruta, permanece gris.
 
-        registros.append({
-            "nombre": nombre,
-            "temp": actual["temperature_2m"],
-            "codigo": actual["weather_code"],
-            "viento": actual["wind_speed_10m"],
-            "rafagas": actual["wind_gusts_10m"],
-        })
-
-    mas_frio = min(registros, key=lambda x: x["temp"])
-    mas_rafaga = max(registros, key=lambda x: x["rafagas"])
-
-    return mas_frio, mas_rafaga
-
-
-@st.cache_data(ttl=300)
-def cargar_vialidad():
-    return leer_filas(descargar_csv())
-
-
-@st.cache_data(ttl=300)
-def cargar_clima_punto(nombre):
-    punto = PUNTOS[nombre]
-    return consultar_clima(punto["lat"], punto["lon"])
-
-
-st.markdown(
-    '<div class="home-title">Estado de Ruta</div>',
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    '<div class="home-sub">Seleccioná un tramo para consultar su estado y el clima</div>',
-    unsafe_allow_html=True,
-)
-
-opciones = ["Seleccioná un tramo…"] + list(TRAMOS.keys())
-
-nombre_tramo = st.selectbox(
-    "Tramo",
-    opciones,
-    index=0,
-)
-
-if nombre_tramo == "Seleccioná un tramo…":
-    st.caption(
-        "Corredor: Las Ovejas · Andacollo · Chos Malal · "
-        "Las Lajas · Zapala · Cutral Co · Neuquén"
-    )
-
-    st.markdown("---")
-    st.markdown("### Links de interés")
-
-    for etiqueta, url in LINKS_INTERES.items():
-        st.link_button(etiqueta, url, use_container_width=True)
-
-    st.stop()
-
-
-cfg = TRAMOS[nombre_tramo]
-
-try:
-    filas = cargar_vialidad()
-
-    clima = {
-        punto: cargar_clima_punto(punto)
-        for punto in cfg["puntos_clima"]
+    La inferencia sólo afecta la visualización del semáforo. No modifica
+    ni inventa registros del parte oficial.
+    """
+    resultado = {
+        codigo: dict(valor)
+        for codigo, valor in estados.items()
     }
 
-except Exception as e:
-    st.error(f"No pude cargar los datos: {e}")
+    # Trabajamos por ruta para no mezclar estados de RN22, RN40, RP43, etc.
+    rutas = []
+    for p in recorrido:
+        if p["ruta"] and p["ruta"] not in rutas:
+            rutas.append(p["ruta"])
+
+    for ruta in rutas:
+        puntos_ruta = [
+            p for p in recorrido
+            if p["ruta"] == ruta
+        ]
+
+        for i, punto in enumerate(puntos_ruta):
+            actual = resultado[punto["codigo"]]
+
+            if actual["nivel"] > 0:
+                continue
+
+            anterior = None
+            siguiente = None
+
+            for j in range(i - 1, -1, -1):
+                candidato = resultado[puntos_ruta[j]["codigo"]]
+                if candidato["nivel"] > 0:
+                    anterior = candidato
+                    break
+
+            for j in range(i + 1, len(puntos_ruta)):
+                candidato = resultado[puntos_ruta[j]["codigo"]]
+                if candidato["nivel"] > 0:
+                    siguiente = candidato
+                    break
+
+            candidatos = [c for c in (anterior, siguiente) if c is not None]
+
+            if not candidatos:
+                continue
+
+            elegido = max(candidatos, key=lambda c: c["nivel"])
+
+            resultado[punto["codigo"]] = {
+                "nivel": elegido["nivel"],
+                "icono": elegido["icono"],
+                "texto": elegido["texto"],
+                "filas": [],
+            }
+
+    return resultado
+
+def filas_vialidad_relevantes(filas, recorrido):
+    rutas = {normalizar(p["ruta"]) for p in recorrido if p["ruta"]}
+    nombres = [p["nombre"] for p in recorrido]
+
+    encontrados = []
+    vistos = set()
+
+    for fila in filas:
+        ruta = normalizar(fila["ruta"])
+        texto = normalizar(
+            f'{fila["tramo"]} {fila["observaciones"]} {fila["restriccion"]}'
+        )
+
+        if not any(r.replace("RN", "").replace("RP", "") in ruta for r in rutas):
+            continue
+
+        if not any(nombre in texto for nombre in nombres):
+            continue
+
+        clave = (fila["ruta"], fila["tramo"], fila["fecha"], fila["hora"])
+        if clave not in vistos:
+            vistos.add(clave)
+            encontrados.append(fila)
+
+    return encontrados
+
+
+puntos = cargar_base()
+localidades = [p for p in puntos if p["tipo"] == "LOCALIDAD"]
+
+st.markdown('<div class="app-title">Rutas Neuquinas - Estado del tránsito y del tiempo</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="app-sub">Seleccioná origen y destino para consultar el recorrido</div>',
+    unsafe_allow_html=True,
+)
+
+nombres_localidades = [p["nombre"] for p in localidades]
+
+c1, c2 = st.columns(2)
+
+with c1:
+    origen = st.selectbox(
+        "Origen",
+        ["Seleccionar…"] + nombres_localidades,
+        index=0,
+    )
+
+with c2:
+    destinos = [
+        n for n in nombres_localidades
+        if n != origen
+    ]
+    destino = st.selectbox(
+        "Destino",
+        ["Seleccionar…"] + destinos,
+        index=0,
+    )
+
+if origen == "Seleccionar…" or destino == "Seleccionar…":
+    st.caption("La información aparecerá cuando selecciones ambos puntos.")
+    st.markdown("---")
+    st.markdown("### Links de interés")
+    for etiqueta, url in LINKS_INTERES.items():
+        st.link_button(etiqueta, url, use_container_width=True)
     st.stop()
 
 
-segmentos = buscar_segmentos(filas, cfg)
+recorrido = seleccionar_recorrido(puntos, origen, destino)
 
-icono_estado, texto_estado = peor_estado(segmentos)
-mas_frio, mas_rafaga = resumen_clima(cfg["puntos_clima"], clima)
+if not recorrido:
+    st.error("No encontré un corredor que conecte ese origen con ese destino.")
+    st.stop()
+
 
 st.markdown(
     f"""
     <div class="route-card">
-        <div class="route-name">{nombre_tramo}</div>
-        <div>{icono_estado} <b>{texto_estado}</b></div>
-        <div class="route-temp">{mas_frio['temp']:.0f}°</div>
+        <div class="route-name">{origen} → {destino}</div>
         <div class="route-sub">
-            {icono_tiempo(mas_frio['codigo'])}
-            {descripcion_tiempo(mas_frio['codigo'])}
-            · mínimo actual en {mas_frio['nombre']}
-        </div>
-        <div class="route-sub">
-            💨 Ráfagas máximas {mas_rafaga['rafagas']:.0f} km/h
+            {len(recorrido)} puntos monitoreados ·
+            {" · ".join(dict.fromkeys(p["ruta"] for p in recorrido))}
         </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
+# Consultamos el parte antes de dibujar el recorrido, porque los colores
+# de cada punto dependen exclusivamente de Vialidad.
+try:
+    filas_vialidad = cargar_vialidad()
+    estado_puntos = estados_oficiales_por_punto(filas_vialidad, recorrido)
+    estado_puntos = completar_estados_conservadores(recorrido, estado_puntos)
+except Exception as e:
+    filas_vialidad = []
+    estado_puntos = {
+        p["codigo"]: {
+            "nivel": 0,
+            "icono": "⚪",
+            "texto": "SIN DATO OFICIAL",
+            "filas": [],
+        }
+        for p in recorrido
+    }
+    st.warning(f"No pude consultar Vialidad en este momento: {e}")
 
-for punto in cfg["puntos_interes"]:
-    actual = clima[punto]["current"]
+
+st.markdown("### Recorrido")
+st.caption(
+    "🟢 Transitable · 🟡 Precaución · 🟠 Restricción/condición importante · "
+    "🔴 Intransitable · ⚪ Sin asociación segura"
+)
+
+for punto in recorrido:
+    estado = estado_puntos[punto["codigo"]]
+
+    texto = f'{estado["icono"]} **{punto["nombre"]}**'
+    if punto["ruta"]:
+        texto += f' · {punto["ruta"]}'
+    st.markdown(texto)
+
+
+# Clima: sólo consultamos los puntos realmente incluidos en el viaje.
+clima = {}
+
+with st.spinner("Consultando clima del recorrido…"):
+    for punto in recorrido:
+        try:
+            clima[punto["codigo"]] = consultar_clima(punto["lat"], punto["lon"])
+        except Exception:
+            clima[punto["codigo"]] = None
+
+
+validos = [
+    (p, clima[p["codigo"]]["current"])
+    for p in recorrido
+    if clima.get(p["codigo"])
+]
+
+if validos:
+    mas_frio_p, mas_frio = min(
+        validos,
+        key=lambda x: x[1]["temperature_2m"]
+    )
+    max_raf_p, max_raf = max(
+        validos,
+        key=lambda x: x[1]["wind_gusts_10m"]
+    )
+
+    st.markdown("### Resumen meteorológico")
 
     st.markdown(
         f"""
-        <div class="poi-box">
-            <b>⚠ Punto de interés: {punto}</b><br>
-            🌡 {actual['temperature_2m']:.1f} °C ·
-            {icono_tiempo(actual['weather_code'])}
-            {descripcion_tiempo(actual['weather_code'])}<br>
-            💨 Viento {actual['wind_speed_10m']:.0f} km/h ·
-            ráfagas {actual['wind_gusts_10m']:.0f} km/h
+        <div class="route-card">
+            <div class="route-temp">{mas_frio['temperature_2m']:.0f}°</div>
+            <div>
+                {icono_tiempo(mas_frio['weather_code'])}
+                {descripcion_tiempo(mas_frio['weather_code'])}
+            </div>
+            <div class="route-sub">
+                Mínimo actual en {mas_frio_p['nombre']} ·
+                ráfagas máximas {max_raf['wind_gusts_10m']:.0f} km/h
+                en {max_raf_p['nombre']}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-st.markdown("### Estado oficial")
+st.markdown("### Puntos del recorrido")
 
-if not segmentos:
-    st.info(
-        "No encontré un registro específico de este tramo en el parte actual. "
-        "El clima se sigue mostrando normalmente."
-    )
+for punto in recorrido:
+    datos = clima.get(punto["codigo"])
+    if not datos:
+        continue
 
-for segmento in segmentos:
-    _, seg_icono, seg_estado = estado_info(segmento["estado_codigo"])
+    actual = datos["current"]
+    es_poi = punto["tipo"] == "PUNTO DE INTERES"
 
-    with st.container(border=True):
-        st.markdown(f"**{seg_icono} {segmento['tramo']}**")
-        st.write(seg_estado)
-
-        if segmento["restriccion"]:
-            st.write(f"🚫 {segmento['restriccion']}")
-
-        if segmento["observaciones"]:
-            st.write(f"📌 {segmento['observaciones']}")
-
-        st.caption(
-            f"Ruta {segmento['ruta']} · "
-            f"Parte: {segmento['fecha']} {segmento['hora']}"
+    if es_poi:
+        st.markdown(
+            f"""
+            <div class="poi-box">
+                <b>{punto['nombre']}</b> · {punto['ruta']}<br>
+                🌡 {actual['temperature_2m']:.1f} °C ·
+                {icono_tiempo(actual['weather_code'])}
+                {descripcion_tiempo(actual['weather_code'])}<br>
+                💨 Viento {actual['wind_speed_10m']:.0f} km/h ·
+                ráfagas {actual['wind_gusts_10m']:.0f} km/h
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-
-st.markdown("### Clima del tramo")
-
-for punto in cfg["puntos_clima"]:
-    actual = clima[punto]["current"]
-
-    with st.container(border=True):
-        c1, c2 = st.columns([1.45, 1])
-
-        with c1:
-            st.markdown(f"**{punto}**")
-            st.write(
-                f"{icono_tiempo(actual['weather_code'])} "
-                f"{descripcion_tiempo(actual['weather_code'])}"
-            )
-            st.caption(
-                f"Viento {actual['wind_speed_10m']:.0f} km/h · "
-                f"ráfagas {actual['wind_gusts_10m']:.0f} km/h"
-            )
-
-        with c2:
-            st.metric(
-                "Ahora",
-                f"{actual['temperature_2m']:.1f} °C",
-            )
-
-
-for punto in cfg["puntos_interes"]:
-    st.markdown(f"### Próximas horas · {punto}")
-
-    for h in horas_futuras(clima[punto]):
-        vis = (
-            f"{h['visibilidad']/1000:.1f} km"
-            if h["visibilidad"] is not None
-            else "s/d"
-        )
-
-        with st.container(border=True):
-            c1, c2 = st.columns([1, 1])
-
-            with c1:
-                st.markdown(
-                    f"**+{h['offset']} h · {h['hora']:%H:%M}**"
+        with st.expander(f"Pronóstico corto · {punto['nombre']}"):
+            for h in horas_futuras(datos):
+                vis = (
+                    f"{h['visibilidad']/1000:.1f} km"
+                    if h["visibilidad"] is not None else "s/d"
                 )
-                st.write(
+                st.markdown(
+                    f"**+{h['offset']} h · {h['hora']:%H:%M}** — "
+                    f"{h['temperatura']:.1f} °C · "
                     f"{icono_tiempo(h['codigo'])} "
                     f"{descripcion_tiempo(h['codigo'])}"
                 )
-
-            with c2:
-                st.metric(
-                    "Temp.",
-                    f"{h['temperatura']:.1f} °C",
+                st.caption(
+                    f"Precip. {h['precipitacion']:.1f} mm · "
+                    f"Nieve {h['nieve']:.1f} cm · "
+                    f"Ráfagas {h['rafagas']:.0f} km/h · "
+                    f"Visib. {vis}"
                 )
+    else:
+        with st.container(border=True):
+            c1, c2 = st.columns([1.4, 1])
+            with c1:
+                st.markdown(f"**{punto['nombre']}**")
+                st.write(
+                    f"{icono_tiempo(actual['weather_code'])} "
+                    f"{descripcion_tiempo(actual['weather_code'])}"
+                )
+                st.caption(
+                    f"Viento {actual['wind_speed_10m']:.0f} km/h · "
+                    f"ráfagas {actual['wind_gusts_10m']:.0f} km/h"
+                )
+            with c2:
+                st.metric("Ahora", f"{actual['temperature_2m']:.1f} °C")
+
+
+st.markdown("### Estado oficial")
+
+try:
+    oficiales = filas_vialidad_relevantes(filas_vialidad, recorrido)
+except Exception as e:
+    oficiales = []
+    st.warning(f"No pude procesar el parte de Vialidad: {e}")
+
+if not oficiales:
+    st.info(
+        "No pude asociar automáticamente un registro específico de Vialidad "
+        "con este recorrido. El clima y los puntos de interés siguen disponibles."
+    )
+else:
+    oficiales.sort(
+        key=lambda f: estado_info(f["estado_codigo"])[0],
+        reverse=True
+    )
+
+    for fila in oficiales:
+        _, icono, estado = estado_info(fila["estado_codigo"])
+        with st.container(border=True):
+            st.markdown(f"**{icono} {fila['tramo']}**")
+            st.write(estado)
+
+            if fila["restriccion"]:
+                st.write(f"🚫 {fila['restriccion']}")
+
+            if fila["observaciones"]:
+                st.write(f"📌 {fila['observaciones']}")
 
             st.caption(
-                f"Precip. {h['precipitacion']:.1f} mm · "
-                f"Nieve {h['nieve']:.1f} cm · "
-                f"Ráfagas {h['rafagas']:.0f} km/h · "
-                f"Visib. {vis}"
+                f"Ruta {fila['ruta']} · Parte: {fila['fecha']} {fila['hora']}"
             )
 
 
@@ -677,19 +803,12 @@ if st.button("🔄 Actualizar datos", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-
 st.markdown("### Links de interés")
 
 for etiqueta, url in LINKS_INTERES.items():
-    st.link_button(
-        etiqueta,
-        url,
-        use_container_width=True,
-    )
-
+    st.link_button(etiqueta, url, use_container_width=True)
 
 st.caption(
     f"Consulta {datetime.now(TZ_ARG):%d/%m/%Y %H:%M} · "
-    "Estado oficial: Vialidad Provincial del Neuquén · "
-    "Meteorología: Open-Meteo"
+    "Base de corredores local + Vialidad Provincial + Open-Meteo"
 )
