@@ -1,55 +1,66 @@
-RUTAS NEUQUINAS - V8.4 CACHE DE VIALIDAD
-==========================================
+CLIMA EN RUTA - NEUQUÉN · PRUEBA LOCAL
+=======================================
 
-Cambios principales
+Esta carpeta es una versión de prueba. No modifica la app publicada ni el
+repositorio de GitHub.
+
+CAMBIOS DE ESTA VERSIÓN
+-----------------------
+- Nuevo nombre visible: Clima en Ruta - Neuquén.
+- Compatible con la nueva base Excel sin columna ORDEN.
+- LATITUD y LONGITUD se leen desde columnas separadas.
+- CORREDOR contiene la secuencia ordenada de códigos.
+- Una localidad puede pertenecer a varios corredores.
+- Se pueden combinar corredores cuando comparten un nodo.
+- Si existen caminos alternativos (por ejemplo Costa/Cordillera), se muestran
+  como alternativas separadas.
+- Sólo TIPO=LOCALIDAD aparece en Origen/Destino.
+- Localidades seleccionables ordenadas alfabéticamente.
+- Nuevo criterio conservador para Vialidad: un tramo oficial sólo colorea el
+  recorrido cuando menciona al menos dos nodos incluidos. Esto evita que un
+  tramo como "Chos Malal - Barrancas" contamine una consulta hacia otro rumbo.
+- Los puntos sin asociación segura heredan el estado del punto asociado más próximo del recorrido.
+- Si hay empate de distancia, se usa el estado más restrictivo.
+- El fallback también se aplica al origen y al destino.
+- El disclaimer se muestra debajo de "Actualizar datos" y antes de "Links de interés".
+- Los teléfonos de emergencia quedan para el próximo update.
+
+DATOS DE VIALIDAD
+-----------------
+La app NO consulta directamente al servidor de Vialidad.
+1. Si existe cache/ParteDiario.csv, usa ese archivo.
+2. Para esta prueba local, si falta el archivo intenta leer la copia cacheada
+   que ya está publicada en el repositorio de GitHub.
+
+EJECUTAR EN WINDOWS
 -------------------
-- La app NO consulta directamente al servidor de Vialidad.
-- Siempre lee: cache/ParteDiario.csv
-- GitHub Actions intenta actualizar esa copia a:
-    09:00
-    15:00
-    18:00
-    22:00
-  hora Argentina (UTC-3).
-- Si la descarga falla o el archivo parece inválido, el script termina sin
-  reemplazar la última copia buena.
-- Si el parte descargado es idéntico al anterior, no hace commit.
-- El botón "Actualizar datos" de Streamlit no genera peticiones a Vialidad:
-  limpia la caché de Streamlit y vuelve a consultar clima / releer archivos.
+1. Abrí una terminal dentro de esta carpeta.
+2. Instalá dependencias (sólo la primera vez):
 
-Archivos nuevos
----------------
-cache/ParteDiario.csv
-scripts/actualizar_parte.py
-.github/workflows/actualizar-parte.yml
+   pip install -r requirements.txt
 
-Subir a GitHub
---------------
-Para que funcione online, hay que subir TODO el contenido de este paquete,
-incluidas las carpetas ocultas .github/workflows y cache.
+3. Ejecutá:
 
-En GitHub Actions, el workflow necesita permiso para escribir en el repositorio.
-El YAML ya declara:
+   python -m streamlit run app.py
 
-    permissions:
-      contents: write
+PRUEBAS SUGERIDAS
+-----------------
+- Chos Malal -> Zapala
+  Debe seguir el corredor principal y no tomar como propio un tramo hacia Barrancas.
 
-Si GitHub bloquea el push por configuración del repositorio:
-Settings -> Actions -> General -> Workflow permissions
-y seleccionar "Read and write permissions".
+- Chos Malal -> Tricao Malal
+  Debe encontrar dos alternativas (Costa y Cordillera).
 
-Prueba manual
--------------
-Una vez subido:
-GitHub -> Actions -> "Actualizar parte de Vialidad" -> Run workflow
+- Neuquén -> Manzano Amargo
+  Debe poder continuar desde el corredor principal al corredor que nace en Las Ovejas.
 
-Si funciona, cache/ParteDiario.csv sólo cambiará cuando Vialidad publique
-un contenido diferente.
+- Revisar los desplegables
+  Sólo deben aparecer LOCALIDADES y tienen que estar en orden alfabético.
 
-Local
------
-    pip install -r requirements.txt
-    python -m streamlit run app.py
+- Revisar recorridos con huecos de asociación
+  No deberían quedar nodos aislados en blanco si existe un punto asociado cercano.
 
-Para probar manualmente la descarga del parte:
-    python scripts/actualizar_parte.py
+PRUEBAS ARTIFICIALES DEL FALLBACK
+---------------------------------
+Se verificó la lógica A-B-C y A-B-C-D: proximidad primero y, ante empate,
+el estado más restrictivo. También se verificó el fallback en origen y destino.
