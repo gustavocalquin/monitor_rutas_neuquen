@@ -64,3 +64,12 @@ PRUEBAS ARTIFICIALES DEL FALLBACK
 ---------------------------------
 Se verificó la lógica A-B-C y A-B-C-D: proximidad primero y, ante empate,
 el estado más restrictivo. También se verificó el fallback en origen y destino.
+
+
+Versión de prueba local v3
+--------------------------
+- Los selectores de Origen y Destino ya no usan un campo de búsqueda, para evitar que se abra el teclado en móvil/APK.
+- Las localidades se eligen desde una lista táctil ordenada alfabéticamente.
+- La consulta se ejecuta únicamente al tocar "Buscar recorrido".
+- Durante la consulta se muestra un indicador de carga.
+- El disclaimer permanece entre "Actualizar datos" y "Links de interés".

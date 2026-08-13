@@ -488,6 +488,42 @@ def mostrar_links():
         st.link_button(etiqueta, url, use_container_width=True)
 
 
+def selector_tactil(etiqueta, clave, opciones, excluir=None):
+    """Selector móvil sin campo de escritura ni apertura del teclado."""
+    disponibles = [o for o in opciones if o != excluir]
+    actual = st.session_state.get(clave)
+    if actual not in disponibles:
+        actual = None
+        st.session_state[clave] = None
+
+    st.markdown(f"**{etiqueta}**")
+    texto_boton = actual or "Seleccionar…"
+    with st.popover(texto_boton, use_container_width=True):
+        with st.container(height=360, border=False):
+            for opcion in disponibles:
+                if st.button(
+                    opcion,
+                    key=f"{clave}_{opcion}",
+                    use_container_width=True,
+                    type="primary" if opcion == actual else "secondary",
+                ):
+                    st.session_state[clave] = opcion
+                    st.session_state["consulta_activa"] = None
+                    st.rerun()
+
+    return st.session_state.get(clave)
+
+
+def mostrar_pie():
+    st.markdown("---")
+    if st.button("🔄 Actualizar datos", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.warning(DISCLAIMER, icon="⚠️")
+    mostrar_links()
+
+
 def mostrar_recorrido(recorrido, filas_vialidad, clima, indice=1, total=1):
     if total > 1:
         st.markdown(f"## Alternativa {indice}")
@@ -630,6 +666,7 @@ def main():
     .route-sub { opacity: .72; font-size: .93rem; }
     .poi-box { border-left: 4px solid #f0a000; padding: 11px 13px; margin: 10px 0; border-radius: 10px; background: rgba(240,160,0,.08); }
     .stButton > button, .stLinkButton > a { border-radius: 16px; min-height: 3rem; }
+    div[data-testid="stPopover"] > button { border-radius: 16px; min-height: 3rem; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -646,68 +683,88 @@ def main():
     )
     nombres_localidades = [p["nombre"] for p in localidades]
 
+    for clave in ("origen_sel", "destino_sel", "consulta_activa"):
+        if clave not in st.session_state:
+            st.session_state[clave] = None
+
     st.markdown('<div class="app-title">Clima en Ruta - Neuquén</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="app-sub">Seleccioná origen y destino para consultar el recorrido</div>',
         unsafe_allow_html=True,
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        origen = st.selectbox("Origen", ["Seleccionar…"] + nombres_localidades, index=0)
-    with c2:
-        destinos = [n for n in nombres_localidades if n != origen]
-        destino = st.selectbox("Destino", ["Seleccionar…"] + destinos, index=0)
 
-    if origen == "Seleccionar…" or destino == "Seleccionar…":
-        st.caption("La información aparecerá cuando selecciones ambos puntos.")
-        st.markdown("---")
-        st.warning(DISCLAIMER, icon="⚠️")
-        mostrar_links()
-        st.stop()
+    origen = selector_tactil("Origen", "origen_sel", nombres_localidades)
+    destino = selector_tactil(
+        "Destino", "destino_sel", nombres_localidades, excluir=origen
+    )
 
-    recorridos = buscar_recorridos(puntos, origen, destino)
-    if not recorridos:
-        st.error("No encontré un corredor o combinación de corredores que conecte ese origen con ese destino.")
-        st.stop()
+    puede_buscar = bool(origen and destino)
+    if st.button(
+        "🔎 Buscar recorrido",
+        use_container_width=True,
+        type="primary",
+        disabled=not puede_buscar,
+    ):
+        st.session_state["consulta_activa"] = (origen, destino)
 
-    if len(recorridos) > 1:
-        st.info(f"Encontré {len(recorridos)} alternativas posibles entre {origen} y {destino}.")
-
-    try:
-        filas_vialidad = cargar_vialidad()
-    except Exception:
-        filas_vialidad = []
-        st.warning(
-            "No pude leer el último parte cacheado de Vialidad. "
-            "La información meteorológica sigue disponible."
+    consulta = st.session_state.get("consulta_activa")
+    if not consulta:
+        st.caption(
+            "Elegí origen y destino y tocá Buscar recorrido para consultar el estado."
         )
+        mostrar_pie()
+        st.stop()
 
-    # Una sola consulta meteorológica por nodo aunque aparezca en varias alternativas.
-    puntos_unicos = {}
-    for recorrido in recorridos:
-        for p in recorrido:
-            puntos_unicos[p["codigo"]] = p
+    origen_consulta, destino_consulta = consulta
 
-    clima = {}
-    with st.spinner("Consultando clima del recorrido…"):
+    with st.spinner("Consultando estado de rutas y clima…"):
+        recorridos = buscar_recorridos(
+            puntos, origen_consulta, destino_consulta
+        )
+        if not recorridos:
+            st.error(
+                "No encontré un corredor o combinación de corredores que conecte "
+                "ese origen con ese destino."
+            )
+            mostrar_pie()
+            st.stop()
+
+        try:
+            filas_vialidad = cargar_vialidad()
+        except Exception:
+            filas_vialidad = []
+
+        # Una sola consulta meteorológica por nodo aunque aparezca en varias alternativas.
+        puntos_unicos = {}
+        for recorrido in recorridos:
+            for p in recorrido:
+                puntos_unicos[p["codigo"]] = p
+
+        clima = {}
         for codigo, punto in puntos_unicos.items():
             try:
                 clima[codigo] = consultar_clima(punto["lat"], punto["lon"])
             except Exception:
                 clima[codigo] = None
 
+    if len(recorridos) > 1:
+        st.info(
+            f"Encontré {len(recorridos)} alternativas posibles entre "
+            f"{origen_consulta} y {destino_consulta}."
+        )
+
+    if not filas_vialidad:
+        st.warning(
+            "No pude leer el último parte cacheado de Vialidad. "
+            "La información meteorológica sigue disponible."
+        )
+
     for i, recorrido in enumerate(recorridos, start=1):
         if i > 1:
             st.markdown("---")
         mostrar_recorrido(recorrido, filas_vialidad, clima, i, len(recorridos))
 
-    st.markdown("---")
-    if st.button("🔄 Actualizar datos", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-
-    st.warning(DISCLAIMER, icon="⚠️")
-    mostrar_links()
+    mostrar_pie()
 
     parte_txt = ""
     if filas_vialidad:
