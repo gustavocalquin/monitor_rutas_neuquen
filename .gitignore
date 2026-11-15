@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+
+# No publicar claves ni herramientas de compilación Android
+**/signing/
+*.jks
+*.keystore
+**/password.txt
+android/tools/
+android/build/
+android/app/assets/
+**/node_modules/

@@ -1,5 +1,3 @@
-import csv
-import io
 import re
 import unicodedata
 from collections import defaultdict
@@ -10,6 +8,8 @@ from zoneinfo import ZoneInfo
 import openpyxl
 import requests
 import streamlit as st
+
+from vialidad import decodificar_bytes, leer_csv_vialidad, fecha_fila, separar_por_vigencia
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -26,7 +26,11 @@ LINKS_INTERES = {
     "📢 Información de rutas · WhatsApp":
         "https://whatsapp.com/channel/0029Vakr9GiIyPtaTYFeIe2J",
     "🛣️ Vialidad Provincial del Neuquén":
-        "https://w2.dpvneuquen.gov.ar/estadorutas.php",
+        "https://www.dpvneuquen.gov.ar/",
+    "📄 Parte de Vialidad Provincial":
+        "https://w2.dpvneuquen.gov.ar/ParteDiario.pdf",
+    "🛣️ Vialidad Nacional · Estado de rutas":
+        "https://www.argentina.gob.ar/transporte/vialidad-nacional/estado-de-rutas",
     "🌦️ Alertas del SMN":
         "https://www.smn.gob.ar/alertas",
 }
@@ -195,41 +199,6 @@ def buscar_recorridos(puntos, origen_nombre, destino_nombre, max_alternativas=6)
             break
 
     return unicos
-
-
-def leer_csv_vialidad(texto):
-    try:
-        dialecto = csv.Sniffer().sniff(texto[:5000], delimiters=",;\t|")
-        delimitador = dialecto.delimiter
-    except csv.Error:
-        delimitador = ";"
-
-    filas = []
-    for f in csv.reader(io.StringIO(texto), delimiter=delimitador):
-        if not any(str(x).strip() for x in f):
-            continue
-        campos = f + [""] * max(0, 11 - len(f))
-        filas.append({
-            "ruta": str(campos[1]).strip(),
-            "tramo": str(campos[3]).strip(),
-            "superficie": str(campos[4]).strip(),
-            "longitud": str(campos[5]).strip(),
-            "estado_codigo": str(campos[6]).strip(),
-            "restriccion": str(campos[7]).strip(),
-            "observaciones": str(campos[8]).strip(),
-            "fecha": str(campos[9]).strip(),
-            "hora": str(campos[10]).strip(),
-        })
-    return filas
-
-
-def decodificar_bytes(contenido):
-    for enc in ("utf-8-sig", "latin-1", "cp1252"):
-        try:
-            return contenido.decode(enc)
-        except UnicodeDecodeError:
-            pass
-    return contenido.decode("utf-8", errors="replace")
 
 
 @st.cache_data(ttl=300)
@@ -628,7 +597,7 @@ def mostrar_recorrido(recorrido, filas_vialidad, clima, indice=1, total=1):
                 with c2:
                     st.metric("Ahora", f"{actual['temperature_2m']:.1f} °C")
 
-    st.markdown("### Estado oficial")
+    st.markdown("### Estado oficial · Vialidad Provincial del Neuquén")
     oficiales = filas_vialidad_relevantes(filas_vialidad, recorrido)
     if not oficiales:
         st.info(
@@ -729,10 +698,13 @@ def main():
             mostrar_pie()
             st.stop()
 
+        error_vialidad = None
+        descartadas = []
         try:
-            filas_vialidad = cargar_vialidad()
-        except Exception:
+            filas_vialidad, descartadas = separar_por_vigencia(cargar_vialidad())
+        except Exception as exc:
             filas_vialidad = []
+            error_vialidad = str(exc)
 
         # Una sola consulta meteorológica por nodo aunque aparezca en varias alternativas.
         puntos_unicos = {}
@@ -753,11 +725,22 @@ def main():
             f"{origen_consulta} y {destino_consulta}."
         )
 
+    if descartadas:
+        ultima = max(fecha_fila(f) for f in descartadas)
+        st.warning(
+            f"Se omitieron {len(descartadas)} registros de Vialidad Provincial con fecha "
+            f"fuera de vigencia (última: {ultima:%d/%m/%Y %H:%M}). "
+            "Sólo se muestran estados de las últimas 48 horas, sin fechas futuras. "
+            "Consultá las fuentes oficiales antes de viajar."
+        )
     if not filas_vialidad:
         st.warning(
-            "No pude leer el último parte cacheado de Vialidad. "
+            "No hay un parte vigente disponible de Vialidad Provincial del Neuquén. "
             "La información meteorológica sigue disponible."
         )
+    if error_vialidad:
+        with st.expander("Detalle del problema al leer el parte"):
+            st.text(error_vialidad)
 
     for i, recorrido in enumerate(recorridos, start=1):
         if i > 1:
@@ -768,14 +751,8 @@ def main():
 
     parte_txt = ""
     if filas_vialidad:
-        fechas_horas = [
-            (str(f.get("fecha", "")).strip(), str(f.get("hora", "")).strip())
-            for f in filas_vialidad
-            if str(f.get("fecha", "")).strip() or str(f.get("hora", "")).strip()
-        ]
-        if fechas_horas:
-            fecha, hora = fechas_horas[-1]
-            parte_txt = f" · Parte Vialidad: {fecha} {hora}".rstrip()
+        ultima = max(fecha_fila(f) for f in filas_vialidad)
+        parte_txt = f" · Parte Vialidad Provincial: {ultima:%d/%m/%Y %H:%M}"
 
     st.caption(
         f"Consulta {datetime.now(TZ_ARG):%d/%m/%Y %H:%M}{parte_txt} · Open-Meteo"

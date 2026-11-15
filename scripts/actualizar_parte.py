@@ -2,65 +2,59 @@
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
-import csv
-import io
 import sys
 import tempfile
+import time
+from http.client import HTTPException
 
 URL = "https://w2.dpvneuquen.gov.ar/ParteDiario.csv"
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "cache" / "ParteDiario.csv"
+sys.path.insert(0, str(ROOT))
+from vialidad import decodificar_bytes, leer_csv_vialidad, separar_por_vigencia
 
 MIN_BYTES = 1000
 MIN_ROWS = 5
 
 
-def decode_bytes(data: bytes) -> str:
-    for enc in ("utf-8-sig", "latin-1", "cp1252"):
-        try:
-            return data.decode(enc)
-        except UnicodeDecodeError:
-            pass
-    return data.decode("utf-8", errors="replace")
-
-
-def validar(data: bytes) -> None:
+def validar(data: bytes, ahora=None) -> None:
     if len(data) < MIN_BYTES:
         raise ValueError(f"Archivo demasiado pequeño: {len(data)} bytes")
 
-    text = decode_bytes(data)
-
-    try:
-        dialect = csv.Sniffer().sniff(text[:5000], delimiters=",;\t|")
-        delim = dialect.delimiter
-    except csv.Error:
-        delim = ";"
-
-    rows = [
-        row for row in csv.reader(io.StringIO(text), delimiter=delim)
-        if any(str(x).strip() for x in row)
-    ]
+    rows = leer_csv_vialidad(decodificar_bytes(data))
 
     if len(rows) < MIN_ROWS:
         raise ValueError(f"CSV con muy pocas filas: {len(rows)}")
 
-    # El formato conocido tiene al menos ruta, tramo, estado, fecha y hora.
-    valid_like = sum(1 for row in rows if len(row) >= 9)
-    if valid_like < MIN_ROWS:
-        raise ValueError("El contenido descargado no parece un parte válido")
+    vigentes, _ = separar_por_vigencia(rows, ahora)
+    if not vigentes:
+        raise ValueError("El parte no contiene registros vigentes (máximo 48 horas)")
 
 
-def main():
+def descargar(intentos=3):
     req = Request(
         URL,
         headers={"User-Agent": "Rutas-Neuquinas-Cache/1.0"}
     )
 
+    for intento in range(1, intentos + 1):
+        try:
+            with urlopen(req, timeout=35) as response:
+                return response.read()
+        except (URLError, OSError, HTTPException) as exc:
+            print(f"Descarga {intento}/{intentos} falló ({URL}): {exc}", file=sys.stderr)
+            if isinstance(exc, HTTPError) and exc.code not in (408, 429, 500, 502, 503, 504):
+                raise
+            if intento == intentos:
+                raise
+            time.sleep(2 ** intento)
+
+
+def main():
     try:
-        with urlopen(req, timeout=35) as response:
-            data = response.read()
-    except (URLError, HTTPError, TimeoutError) as exc:
-        print(f"No se pudo descargar el parte: {exc}", file=sys.stderr)
+        data = descargar()
+    except (URLError, OSError, HTTPException) as exc:
+        print(f"No se pudo descargar el parte; se conserva la copia anterior: {exc}", file=sys.stderr)
         return 1
 
     try:

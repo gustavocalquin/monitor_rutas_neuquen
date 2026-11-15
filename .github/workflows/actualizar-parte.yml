@@ -21,6 +21,7 @@ permissions:
 jobs:
   actualizar-parte:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Descargar repositorio
